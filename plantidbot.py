@@ -32,12 +32,15 @@ async def main_loop():
             await join(s, COMMUNITY_ID)
 
             while True:
-                post = json.loads(await s.recv())
+                update = json.loads(await s.recv())
 
-                if (id := post['data']['post_view']['post']['id']) in processed:
+                if update['op'] != 'CreatePost':
                     continue
 
-                await handle_post(s, post, jwt)
+                if (id := update['data']['post_view']['post']['id']) in processed:
+                    continue
+
+                await handle_post(s, update, jwt)
 
                 processed.append(id)
                 dump_processed('processed.bin', processed)
