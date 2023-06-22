@@ -74,7 +74,7 @@ async def handle_post(s, post, jwt):
     for result in plant_id['results'][:5]:
         common_name = result['species']['commonNames'][0] if len(result['species']['commonNames']) != 0 else '/'
         scientific_name = result['species']['scientificNameWithoutAuthor']
-        score = result['score']
+        score = format(result['score'] * 100, '.2f')
 
         table += f'|{common_name}|{scientific_name}|{score} %|\n'
 
