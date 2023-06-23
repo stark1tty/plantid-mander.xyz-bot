@@ -1,6 +1,3 @@
-import asyncio
-import websockets
-import json
 import time
 import pickle
 import requests
@@ -10,55 +7,58 @@ import requests
 
 USERNAME = ''
 PASSWORD = ''
-INSTANCE_URL = ''
-COMMUNITY_ID = 0 # This needs to be set to the ID of !plantid@mander.xyz (or wherever we want it to operate)
+INSTANCE_URL = 'mander.xyz'
+COMMUNITY_NAME = 'plantid'
 API_KEY = ''
+RETRY_TIME = 10
+POLLING_POST_LIMIT = 5
+POLLING_TIME = 60 
 
 
 # --- Main loop ---
 
 
-async def main_loop():
+def main_loop():
     # Load list of already processed posts from processed.bin
     # (An empty file with this name needs to be created when the bot is being set up or it will not work)
     processed = load_processed('processed.bin')
 
-    # If connection fails, attempts to reconnect automatically in 10s
-    async for s in websockets.connect(f'wss://{INSTANCE_URL}/api/v3/ws'):
+    API_URL = f'https://{INSTANCE_URL}/api/v3'
+
+    # If request error occurs, attempts to retry automatically
+    while True:
         try:
-            jwt = await login(s, USERNAME, PASSWORD)
+            jwt = login(API_URL, USERNAME, PASSWORD)
 
-            # Tells Lemmy API to start sending us updates for new posts
-            await join(s, COMMUNITY_ID)
-
+            # Start polling lemmy for new posts
             while True:
-                update = json.loads(await s.recv())
+                posts = get_posts(API_URL, jwt, POLLING_POST_LIMIT, 'New', COMMUNITY_NAME)
 
-                if update['op'] != 'CreatePost':
-                    continue
+                for post in posts:
+                    if (id := post['post']['id']) in processed:
+                        continue
 
-                if (id := update['data']['post_view']['post']['id']) in processed:
-                    continue
+                    handle_post(API_URL, jwt, post)
 
-                await handle_post(s, update, jwt)
+                    processed.append(id)
+                    dump_processed('processed.bin', processed)
 
-                processed.append(id)
-                dump_processed('processed.bin', processed)
+                time.sleep(POLLING_TIME)
 
-        except websockets.ConnectionClosedError:
-            time.sleep(10)
+        except requests.RequestException:
+            time.sleep(RETRY_TIME)
             continue
 
 
 # --- Post handling ---
 
 
-async def handle_post(s, post, jwt):
-    if (url := post['data']['post_view']['post']['url']) == None:
+def handle_post(api_url, jwt, post):
+    if (url := post['post']['url']) == None:
         return
 
-    # Return if the url on the post is not a Lemmy-hosted image
-    if 'pictrs' not in url:
+    # Return if the url on the post is not an image
+    if url.split('.')[-1] not in ['jpg', 'jpeg', 'png', 'webp']:
         return
     
     plant_id = requests.get(f'https://my-api.plantnet.org/v2/identify/all?api-key={API_KEY}', {
@@ -91,49 +91,38 @@ Beep, boop
 I'm a bot, and this action was performed automatically.
 '''
 
-    # comment(s, jwt, post['data']['post_view']['post']['id'], comment_text)
-    print(comment_text)
+    comment(api_url, jwt, comment_text, post['post']['id'])
 
 
 # --- Lemmy API operations ---
 
 
-async def login(s, username, password):
-    await s.send(json.dumps({
-        'op': 'Login',
-        'data': {
-            'username_or_email': username,
-            'password': password
-        }
-    }))
+def login(api_url, username_or_email, password):
+    res = requests.post(f'{api_url}/user/login', json={
+        'username_or_email': username_or_email,
+        'password': password,
+    })
 
-    return json.loads(await s.recv())['data']['jwt']
+    return res.json()['jwt']
 
 
-async def join(s, community_id):
-    await s.send(json.dumps({
-        'op': 'CommunityJoin',
-        'data': {
-            'community_id': community_id
-        }
-    }))
+def get_posts(api_url, auth, limit, sort, community_name):
+    res = requests.get(f'{api_url}/post/list', params={
+        'auth': auth,
+        'limit': limit,
+        'sort': sort,
+        'community_name': community_name,
+    })
 
-    return json.loads(await s.recv())
+    return res.json()['posts']
 
 
-async def comment(s, jwt, post_id, text):
-    await s.send(json.dumps({
-        'op': 'CreateComment',
-        'data': {
-            'content': text,
-            'parent_id': None,
-            'post_id': post_id,
-            'form_id': None,
-            'auth': jwt
-        }
-    }))
-
-    return json.loads(await s.recv())
+def comment(api_url, auth, content, post_id):
+    requests.post(f'{api_url}/comment', json={
+        'auth': auth,
+        'content': content,
+        'post_id': post_id
+    })
 
 
 # --- Other utility functions ---
@@ -154,4 +143,5 @@ def dump_processed(path, processed):
         f.write(pickle.dumps(processed))
 
 
-asyncio.run(main_loop())
+if __name__ == '__main__':
+    main_loop()
