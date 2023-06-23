@@ -57,8 +57,8 @@ async def handle_post(s, post, jwt):
     if (url := post['data']['post_view']['post']['url']) == None:
         return
 
-    # Return if the url on the post is not a Lemmy-hosted image
-    if 'pictrs' not in url:
+    # Return if the url on the post is not an image
+    if url.split('.')[-1] not in ['jpg', 'jpeg', 'png', 'webp']:
         return
     
     plant_id = requests.get(f'https://my-api.plantnet.org/v2/identify/all?api-key={API_KEY}', {
